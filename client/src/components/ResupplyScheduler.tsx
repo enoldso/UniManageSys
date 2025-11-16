@@ -1,9 +1,10 @@
 import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { format, addDays, isBefore, isToday, isAfter, differenceInDays } from 'date-fns';
+import { format, addDays, isBefore, isToday, isAfter, differenceInDays, startOfDay, endOfDay, parseISO } from 'date-fns';
 import { z } from 'zod';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
+import { CSVLink } from 'react-csv';
 import {
   Table,
   TableBody,
@@ -13,9 +14,26 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Calendar as CalendarIcon, Plus, Package, Loader2, Trash2, Edit, X, Check } from 'lucide-react';
+import { 
+  Calendar as CalendarIcon, 
+  Plus, 
+  Package, 
+  Loader2, 
+  Trash2, 
+  Edit, 
+  X, 
+  Check, 
+  Search, 
+  Download, 
+  Filter, 
+  ChevronLeft, 
+  ChevronRight, 
+  ChevronsLeft, 
+  ChevronsRight,
+  FileText
+} from 'lucide-react';
 import StatusBadge from './StatusBadge';
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -26,6 +44,7 @@ import { cn } from "@/lib/utils";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { toast } from "@/hooks/use-toast";
+import { Checkbox } from "@/components/ui/checkbox";
 
 // Schema for form validation
 const resupplyFormSchema = z.object({
@@ -115,6 +134,24 @@ const deleteResupply = async (id: string): Promise<void> => {
   });
 };
 
+type ResupplyStatus = 'scheduled' | 'in-transit' | 'delivered' | 'cancelled';
+
+const updateResupplyStatus = async ({ id, status }: { id: string; status: ResupplyStatus }): Promise<ResupplyFormValues> => {
+  // Simulate API call
+  return new Promise((resolve, reject) => {
+    setTimeout(() => {
+      const index = mockResupplies.findIndex(r => r.id === id);
+      if (index !== -1) {
+        const updatedResupply = { ...mockResupplies[index], status };
+        mockResupplies[index] = updatedResupply;
+        resolve(updatedResupply);
+      } else {
+        reject(new Error('Resupply not found'));
+      }
+    }, 300);
+  });
+};
+
 export default function ResupplyScheduler() {
   const queryClient = useQueryClient();
   const [statusFilter, setStatusFilter] = useState<string>('all');
@@ -122,13 +159,42 @@ export default function ResupplyScheduler() {
   const [editingResupply, setEditingResupply] = useState<ResupplyFormValues | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [resupplyToDelete, setResupplyToDelete] = useState<string | null>(null);
-  const [date, setDate] = useState<Date | undefined>(new Date());
+  const [pagination, setPagination] = useState({
+    page: 1,
+    pageSize: 10,
+  });
+  const [searchQuery, setSearchQuery] = useState('');
+  const [dateRange, setDateRange] = useState<{ from?: Date; to?: Date }>({});
 
   // Fetch resupplies
   const { data: resupplies = [], isLoading } = useQuery({
     queryKey: ['resupplies'],
     queryFn: fetchResupplies,
   });
+
+  // Status update mutation
+  const statusUpdateMutation = useMutation({
+    mutationFn: updateResupplyStatus,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['resupplies'] });
+      toast({
+        title: 'Status updated',
+        description: 'The resupply status has been updated successfully.',
+      });
+    },
+    onError: (error) => {
+      toast({
+        title: 'Error',
+        description: error.message || 'Failed to update status',
+        variant: 'destructive',
+      });
+    },
+  });
+
+  // Handle status update
+  const handleStatusUpdate = (id, newStatus) => {
+    statusUpdateMutation.mutate({ id, status: newStatus });
+  };
 
   // Create/Update mutation
   const saveMutation = useMutation({
@@ -177,20 +243,49 @@ export default function ResupplyScheduler() {
     },
   });
 
-  // Filter and sort resupplies
-  const filteredResupplies = useMemo(() => {
-    let result = [...resupplies];
-    
+  // Filter, sort and paginate resupplies
+  const { filteredResupplies, totalItems } = useMemo(() => {
     // Apply status filter
-    if (statusFilter !== 'all') {
-      result = result.filter(r => r.status === statusFilter);
+    let filtered = statusFilter === 'all' 
+      ? [...resupplies] 
+      : resupplies.filter(resupply => resupply.status === statusFilter);
+
+    // Apply search filter if any
+    if (searchQuery) {
+      const query = searchQuery.toLowerCase();
+      filtered = filtered.filter(
+        resupply => 
+          resupply.schoolName.toLowerCase().includes(query) ||
+          resupply.itemType.toLowerCase().includes(query) ||
+          (resupply.deliveryNotes?.toLowerCase().includes(query) ?? false)
+      );
     }
-    
-    // Sort by date (soonest first)
-    return result.sort((a, b) => 
+
+    // Apply date filter if any
+    if (dateRange.from || dateRange.to) {
+      filtered = filtered.filter(resupply => {
+        const scheduledDate = new Date(resupply.scheduledDate);
+        return (
+          (!dateRange.from || scheduledDate >= startOfDay(dateRange.from)) &&
+          (!dateRange.to || scheduledDate <= endOfDay(dateRange.to))
+        );
+      });
+    }
+
+    // Sort by scheduled date
+    filtered.sort((a, b) => 
       new Date(a.scheduledDate).getTime() - new Date(b.scheduledDate).getTime()
     );
-  }, [resupplies, statusFilter]);
+
+    // Apply pagination
+    const startIndex = (pagination.page - 1) * pagination.pageSize;
+    const paginated = filtered.slice(startIndex, startIndex + pagination.pageSize);
+
+    return {
+      filteredResupplies: paginated,
+      totalItems: filtered.length
+    };
+  }, [resupplies, statusFilter, searchQuery, dateRange, pagination.page, pagination.pageSize]);
 
   // Open form for editing
   const handleEdit = (resupply: ResupplyFormValues) => {
@@ -387,6 +482,83 @@ export default function ResupplyScheduler() {
             )}
           </div>
         </CardContent>
+        {/* Pagination */}
+        {!isLoading && totalItems > 0 && (
+          <CardFooter className="flex flex-col sm:flex-row items-center justify-between gap-4 p-4 border-t">
+            <div className="text-sm text-muted-foreground">
+              Showing <span className="font-medium">
+                {Math.min((pagination.page - 1) * pagination.pageSize + 1, totalItems)}
+              </span> to{' '}
+              <span className="font-medium">
+                {Math.min(pagination.page * pagination.pageSize, totalItems)}
+              </span>{' '}
+              of <span className="font-medium">{totalItems}</span> results
+            </div>
+            
+            <div className="flex items-center space-x-2">
+              <div className="flex items-center space-x-2">
+                <p className="text-sm font-medium">Rows per page</p>
+                <Select
+                  value={`${pagination.pageSize}`}
+                  onValueChange={(value) => handlePageSizeChange(value)}
+                >
+                  <SelectTrigger className="h-8 w-[70px]">
+                    <SelectValue placeholder={pagination.pageSize} />
+                  </SelectTrigger>
+                  <SelectContent side="top">
+                    {[5, 10, 20, 30, 40, 50].map((pageSize) => (
+                      <SelectItem key={pageSize} value={`${pageSize}`}>
+                        {pageSize}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              
+              <div className="flex items-center space-x-2">
+                <Button
+                  variant="outline"
+                  className="h-8 w-8 p-0"
+                  onClick={() => handlePageChange(1)}
+                  disabled={pagination.page === 1}
+                >
+                  <span className="sr-only">Go to first page</span>
+                  <ChevronsLeft className="h-4 w-4" />
+                </Button>
+                <Button
+                  variant="outline"
+                  className="h-8 w-8 p-0"
+                  onClick={() => handlePageChange(pagination.page - 1)}
+                  disabled={pagination.page === 1}
+                >
+                  <span className="sr-only">Go to previous page</span>
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <div className="flex items-center justify-center text-sm font-medium w-8">
+                  {pagination.page}
+                </div>
+                <Button
+                  variant="outline"
+                  className="h-8 w-8 p-0"
+                  onClick={() => handlePageChange(pagination.page + 1)}
+                  disabled={pagination.page >= Math.ceil(totalItems / pagination.pageSize)}
+                >
+                  <span className="sr-only">Go to next page</span>
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+                <Button
+                  variant="outline"
+                  className="h-8 w-8 p-0"
+                  onClick={() => handlePageChange(Math.ceil(totalItems / pagination.pageSize))}
+                  disabled={pagination.page >= Math.ceil(totalItems / pagination.pageSize)}
+                >
+                  <span className="sr-only">Go to last page</span>
+                  <ChevronsRight className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+          </CardFooter>
+        )}
       </Card>
 
       {/* Add/Edit Resupply Dialog */}
