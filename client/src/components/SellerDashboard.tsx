@@ -17,7 +17,8 @@ import StatsCard from './StatsCard';
 import InventoryView from './InventoryView';
 import ResupplyScheduler from './ResupplyScheduler';
 import RepairTracking from './RepairTracking';
-import { Package, Calendar, Wrench, AlertTriangle, LogOut, DollarSign, TrendingUp, CreditCard } from 'lucide-react';
+import FinancialDashboard from './FinancialDashboard';
+import { Package, Calendar, Wrench, AlertTriangle, LogOut, DollarSign, TrendingUp, CreditCard, BarChart2 } from 'lucide-react';
 import type { Payment } from '@shared/schema';
 
 interface SellerDashboardProps {
@@ -25,7 +26,7 @@ interface SellerDashboardProps {
 }
 
 export default function SellerDashboard({ onLogout }: SellerDashboardProps) {
-  const [activeTab, setActiveTab] = useState('dashboard');
+  const [activeTab, setActiveTab] = useState('inventory');
 
   const { data: payments = [] } = useQuery<Payment[]>({
     queryKey: ['/api/payments'],
@@ -67,6 +68,26 @@ export default function SellerDashboard({ onLogout }: SellerDashboardProps) {
                 <h2 className="text-lg font-semibold">Seller Portal</h2>
                 <p className="text-sm text-muted-foreground">Multi-School Management</p>
               </div>
+              <div className="flex-1">
+                <Button
+                  variant={activeTab === 'financial' ? 'secondary' : 'ghost'}
+                  className="w-full justify-start"
+                  onClick={() => setActiveTab('financial')}
+                >
+                  <BarChart2 className="mr-2 h-4 w-4" />
+                  Financial
+                </Button>
+              </div>
+              <div className="flex-1">
+                <Button
+                  variant={activeTab === 'dashboard' ? 'secondary' : 'ghost'}
+                  className="w-full justify-start"
+                  onClick={() => setActiveTab('dashboard')}
+                >
+                  <Package className="mr-2 h-4 w-4" />
+                  Inventory
+                </Button>
+              </div>
             </div>
             <Button 
               variant="outline" 
@@ -80,19 +101,28 @@ export default function SellerDashboard({ onLogout }: SellerDashboardProps) {
           </header>
 
           <main className="flex-1 overflow-auto p-6">
+            {activeTab === 'financial' && <FinancialDashboard />}
+            {activeTab === 'inventory' && <InventoryView type="seller" />}
             {activeTab === 'dashboard' && (
               <div className="space-y-6 max-w-7xl mx-auto">
                 <div>
-                  <h1 className="text-3xl font-bold">Seller Dashboard</h1>
-                  <p className="text-muted-foreground">Overview of inventory and deliveries across all schools</p>
+                  <h1 className="text-3xl font-bold">Dashboard</h1>
+                  <p className="text-muted-foreground">Overview of your inventory and operations</p>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                   <StatsCard
-                    title="Total Inventory"
+                    title="Total Items"
                     value={stats.totalInventory}
                     icon={Package}
-                    subtitle="items in stock"
+                    subtitle="in stock"
+                  />
+                  <StatsCard
+                    title="Low Stock Items"
+                    value={stats.lowStockItems}
+                    icon={AlertTriangle}
+                    subtitle="needs attention"
+                    variant={stats.lowStockItems > 0 ? 'destructive' : 'default'}
                   />
                   <StatsCard
                     title="Scheduled Deliveries"
@@ -104,17 +134,34 @@ export default function SellerDashboard({ onLogout }: SellerDashboardProps) {
                     title="Active Repairs"
                     value={stats.activeRepairs}
                     icon={Wrench}
-                  />
-                  <StatsCard
-                    title="Low Stock Alerts"
-                    value={stats.lowStockItems}
-                    icon={AlertTriangle}
+                    subtitle="in progress"
                   />
                 </div>
+
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Inventory Status</CardTitle>
+                    <CardDescription>Overview of inventory levels across all schools</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between">
+                        <div className="text-sm font-medium">In Stock Items</div>
+                        <div className="text-sm text-muted-foreground">{stats.totalInventory} items</div>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <div className="text-sm font-medium">Low Stock Items</div>
+                        <div className="text-sm text-destructive font-medium">{stats.lowStockItems} items</div>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <div className="text-sm font-medium">Out of Stock Items</div>
+                        <div className="text-sm text-muted-foreground">0 items</div>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
               </div>
             )}
-
-            {activeTab === 'inventory' && <InventoryView type="seller" />}
             {activeTab === 'resupply' && <ResupplyScheduler />}
             {activeTab === 'repairs' && <RepairTracking type="seller" />}
             {activeTab === 'financials' && (

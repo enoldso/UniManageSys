@@ -63,17 +63,89 @@ export default function InventoryView({ type, schoolId, schoolFilter }: Inventor
   });
   const { toast } = useToast();
 
-  const { data: inventory = [] } = useQuery<Inventory[]>({
-    queryKey: type === 'school' && schoolId
-      ? ['/api/inventory', schoolId]
-      : ['/api/inventory/all/seller'],
-    enabled: type === 'seller' || Boolean(schoolId),
-  });
+  // Mock inventory data
+  const mockInventory: Inventory[] = [
+    {
+      id: '1',
+      schoolId: 'school-1',
+      itemType: 'School Shirt',
+      size: 'M',
+      quantity: 50,
+      lowStockThreshold: 10,
+      schoolName: 'Greenfield Academy', // Added to match the expected type
+    },
+    {
+      id: '2',
+      schoolId: 'school-1',
+      itemType: 'School Trousers',
+      size: 'M',
+      quantity: 30,
+      lowStockThreshold: 5,
+      schoolName: 'Greenfield Academy',
+    },
+    {
+      id: '3',
+      schoolId: 'school-2',
+      itemType: 'School Shirt',
+      size: 'S',
+      quantity: 25,
+      lowStockThreshold: 5,
+      schoolName: "St. Mary's School",
+    },
+    {
+      id: '4',
+      schoolId: 'school-3',
+      itemType: 'School Skirt',
+      size: 'L',
+      quantity: 5,  // Low stock item
+      lowStockThreshold: 10,
+      schoolName: 'Sunrise Public School',
+    },
+  ];
 
-  const { data: students = [] } = useQuery<Student[]>({
-    queryKey: ['/api/students', schoolId],
-    enabled: type === 'school' && !!schoolId,
-  });
+  // Mock students data
+  const mockStudents: Student[] = [
+    { 
+      id: '1', 
+      name: 'John Doe', 
+      schoolId: 'school-1', 
+      grade: '5', 
+      admissionNumber: 'S001',
+      age: 10,
+      parentName: 'Mr. Doe',
+      parentPhone: '1234567890',
+      parentEmail: 'parent1@example.com',
+      totalAmount: 0
+    },
+    { 
+      id: '2', 
+      name: 'Jane Smith', 
+      schoolId: 'school-1', 
+      grade: '5', 
+      admissionNumber: 'S002',
+      age: 10,
+      parentName: 'Mrs. Smith',
+      parentPhone: '0987654321',
+      parentEmail: 'parent2@example.com',
+      totalAmount: 0
+    },
+    { 
+      id: '3', 
+      name: 'Mike Johnson', 
+      schoolId: 'school-2', 
+      grade: '6', 
+      admissionNumber: 'S003',
+      age: 11,
+      parentName: 'Mr. Johnson',
+      parentPhone: '1122334455',
+      parentEmail: 'parent3@example.com',
+      totalAmount: 0
+    },
+  ];
+
+  // Use mock data instead of API calls
+  const inventory = mockInventory;
+  const students = mockStudents;
 
   const issueUniformMutation = useMutation({
     mutationFn: async (data: any) => {
