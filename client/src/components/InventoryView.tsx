@@ -63,89 +63,78 @@ export default function InventoryView({ type, schoolId, schoolFilter }: Inventor
   });
   const { toast } = useToast();
 
-  // Mock inventory data
-  const mockInventory: Inventory[] = [
-    {
-      id: '1',
-      schoolId: 'school-1',
-      itemType: 'School Shirt',
-      size: 'M',
-      quantity: 50,
-      lowStockThreshold: 10,
-      schoolName: 'Greenfield Academy', // Added to match the expected type
+  // Fetch inventory data based on user type
+  const { data: inventory = [], isLoading, error } = useQuery<Inventory[]>({
+    queryKey: type === 'school' ? ['inventory', schoolId] : ['all-inventory'],
+    queryFn: async () => {
+      if (type === 'school' && schoolId) {
+        // For school users, only fetch their own inventory
+        const data = await apiRequest<Inventory[]>(`/api/inventory/${schoolId}`);
+        return data || [];
+      } else {
+        // For sellers, fetch all inventory
+        const data = await apiRequest<Inventory[]>('/api/inventory/all/seller');
+        return data || [];
+      }
     },
-    {
-      id: '2',
-      schoolId: 'school-1',
-      itemType: 'School Trousers',
-      size: 'M',
-      quantity: 30,
-      lowStockThreshold: 5,
-      schoolName: 'Greenfield Academy',
-    },
-    {
-      id: '3',
-      schoolId: 'school-2',
-      itemType: 'School Shirt',
-      size: 'S',
-      quantity: 25,
-      lowStockThreshold: 5,
-      schoolName: "St. Mary's School",
-    },
-    {
-      id: '4',
-      schoolId: 'school-3',
-      itemType: 'School Skirt',
-      size: 'L',
-      quantity: 5,  // Low stock item
-      lowStockThreshold: 10,
-      schoolName: 'Sunrise Public School',
-    },
-  ];
+    enabled: type === 'school' ? !!schoolId : true,
+    staleTime: 5 * 60 * 1000, // 5 minutes
+  });
 
-  // Mock students data
-  const mockStudents: Student[] = [
-    { 
-      id: '1', 
-      name: 'John Doe', 
-      schoolId: 'school-1', 
-      grade: '5', 
-      admissionNumber: 'S001',
-      age: 10,
-      parentName: 'Mr. Doe',
-      parentPhone: '1234567890',
-      parentEmail: 'parent1@example.com',
-      totalAmount: 0
-    },
-    { 
-      id: '2', 
-      name: 'Jane Smith', 
-      schoolId: 'school-1', 
-      grade: '5', 
-      admissionNumber: 'S002',
-      age: 10,
-      parentName: 'Mrs. Smith',
-      parentPhone: '0987654321',
-      parentEmail: 'parent2@example.com',
-      totalAmount: 0
-    },
-    { 
-      id: '3', 
-      name: 'Mike Johnson', 
-      schoolId: 'school-2', 
-      grade: '6', 
-      admissionNumber: 'S003',
-      age: 11,
-      parentName: 'Mr. Johnson',
-      parentPhone: '1122334455',
-      parentEmail: 'parent3@example.com',
-      totalAmount: 0
-    },
-  ];
+  // Filter inventory based on selected school (for seller view only)
+  const filteredInventory = useMemo(() => {
+    if (type === 'school' || selectedSchool === 'all') {
+      return inventory;
+    }
+    return inventory.filter(item => item.schoolId === selectedSchool);
+  }, [inventory, selectedSchool, type]);
 
-  // Use mock data instead of API calls
-  const inventory = mockInventory;
-  const students = mockStudents;
+  // Get unique schools for filter dropdown (seller view only)
+  const schools = useMemo(() => {
+    if (type === 'school') return [];
+    
+    const schoolMap = new Map<string, string>();
+    inventory.forEach(item => {
+      if (item.schoolId && item.schoolName) {
+        schoolMap.set(item.schoolId, item.schoolName);
+      }
+    });
+    
+    return Array.from(schoolMap.entries()).map(([id, name]) => ({
+      id,
+      name
+    }));
+  }, [inventory, type]);
+
+  // Loading and error states
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-primary"></div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="text-center py-8 text-destructive">
+        <AlertTriangle className="mx-auto h-12 w-12 mb-4" />
+        <p>Failed to load inventory. Please try again later.</p>
+      </div>
+    );
+  }
+  // Fetch students for the school (only for school users)
+  const { data: students = [] } = useQuery<Student[]>({
+    queryKey: ['students', schoolId],
+    queryFn: async () => {
+      if (type === 'school' && schoolId) {
+        const data = await apiRequest<Student[]>(`/api/students/${schoolId}`);
+        return data || [];
+      }
+      return [];
+    },
+    enabled: type === 'school' && !!schoolId,
+  });
 
   const issueUniformMutation = useMutation({
     mutationFn: async (data: any) => {

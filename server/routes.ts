@@ -56,16 +56,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
   
   app.get("/api/inventory/all/seller", async (req, res) => {
-    const allSchools = ["SCH001", "SCH002", "SCH003"];
-    const inventoryPromises = allSchools.map(async (code) => {
-      const school = await storage.getSchoolByCode(code);
-      if (!school) return [];
-      return storage.getInventory(school.id);
-    });
-    
-    const inventoryArrays = await Promise.all(inventoryPromises);
-    const allInventory = inventoryArrays.flat();
-    return res.json(allInventory);
+    try {
+      // Get all schools
+      const allSchools = Array.from((storage as any).schools.values());
+      
+      // Fetch inventory for each school
+      const inventoryPromises = allSchools.map(async (school: any) => {
+        return storage.getInventory(school.id);
+      });
+      
+      const inventoryArrays = await Promise.all(inventoryPromises);
+      const allInventory = inventoryArrays.flat();
+      return res.json(allInventory);
+    } catch (error) {
+      console.error('Error fetching all inventory:', error);
+      return res.status(500).json({ error: 'Failed to fetch inventory' });
+    }
   });
   
   // Issue uniform - deduct from inventory and update student
