@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import {
   Table,
@@ -22,10 +22,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Plus, AlertTriangle, Package, School } from 'lucide-react';
+import { Plus, AlertTriangle, Package, School, FileText, X } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { queryClient, apiRequest } from '@/lib/queryClient';
 import type { Inventory, Student } from '@shared/schema';
+import React from 'react';
 
 interface InventoryViewProps {
   type: 'school' | 'seller';
@@ -40,6 +41,8 @@ export default function InventoryView({ type, schoolId, schoolFilter }: Inventor
   const [issueQuantity, setIssueQuantity] = useState('1');
   const [selectedStudentId, setSelectedStudentId] = useState('');
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
+  const [isInvoicePreviewOpen, setIsInvoicePreviewOpen] = useState(false);
+  const [selectedItems, setSelectedItems] = useState<{id: string, quantity: number}[]>([]);
   // Dummy schools data - in a real app, this would come from an API
   const dummySchools = [
     { id: 'school-1', name: 'Greenfield Academy' },
@@ -318,12 +321,67 @@ export default function InventoryView({ type, schoolId, schoolFilter }: Inventor
     return { label: 'Good', color: 'text-green-600 dark:text-green-500' };
   };
 
+  // Add dummy pricing data
+  const getItemPrice = (item: Inventory) => {
+    // Simple hash function to generate consistent prices based on item type and size
+    const priceMap: Record<string, number> = {
+      'shirt-s': 1200,
+      'shirt-m': 1300,
+      'shirt-l': 1400,
+      'pants-s': 1500,
+      'pants-m': 1600,
+      'pants-l': 1700,
+      'skirt-s': 1400,
+      'skirt-m': 1500,
+      'skirt-l': 1600,
+      'sweater-s': 1800,
+      'sweater-m': 1900,
+      'sweater-l': 2000,
+    };
+    
+    const key = `${item.itemType.toLowerCase()}-${item.size.toLowerCase()}`;
+    return priceMap[key] || 1000; // Default price if not found
+  };
+
+  const toggleItemSelection = (itemId: string) => {
+    setSelectedItems(prev => {
+      const existing = prev.find(i => i.id === itemId);
+      if (existing) {
+        return prev.filter(i => i.id !== itemId);
+      } else {
+        return [...prev, { id: itemId, quantity: 1 }];
+      }
+    });
+  };
+
+  const updateItemQuantity = (itemId: string, quantity: number) => {
+    if (quantity < 1) return;
+    setSelectedItems(prev => 
+      prev.map(item => 
+        item.id === itemId ? { ...item, quantity } : item
+      )
+    );
+  };
+
+  const calculateInvoiceTotal = () => {
+    return selectedItems.reduce((total, { id, quantity }) => {
+      const item = inventory.find(i => i.id === id);
+      if (!item) return total;
+      return total + (getItemPrice(item) * quantity);
+    }, 0);
+  };
+
   const renderInventoryRow = (item: Inventory) => {
     const status = getStockStatus(item.quantity, item.lowStockThreshold);
     const progressValue = Math.min((item.quantity / (item.lowStockThreshold * 2)) * 100, 100);
 
     return (
-      <TableRow key={item.id} data-testid={`row-inventory-${item.id}`}>
+      <TableRow 
+        key={item.id} 
+        data-testid={`row-inventory-${item.id}`}
+        className={selectedItems.some(i => i.id === item.id) ? 'bg-muted/50' : ''}
+        onClick={() => toggleItemSelection(item.id)}
+      >
         <TableCell className="font-medium">
           <div className="flex flex-col">
             <span>{item.itemType}</span>
@@ -334,8 +392,11 @@ export default function InventoryView({ type, schoolId, schoolFilter }: Inventor
             )}
           </div>
         </TableCell>
-        <TableCell>
+        <TableCell className="font-medium">
           <Badge variant="outline">{item.size}</Badge>
+        </TableCell>
+        <TableCell className="font-mono">
+          KES {getItemPrice(item).toLocaleString()}
         </TableCell>
         <TableCell className="font-mono font-medium">
           {item.quantity}
@@ -394,6 +455,112 @@ export default function InventoryView({ type, schoolId, schoolFilter }: Inventor
     return 'bg-green-500';
   };
 
+  // SchoolSection component to handle collapsible school sections
+  const SchoolSection = React.memo(({ 
+    schoolId, 
+    schoolName, 
+    schoolItems, 
+    type, 
+    renderInventoryRow 
+  }: { 
+    schoolId: string; 
+    schoolName: string; 
+    schoolItems: Inventory[]; 
+    type: 'school' | 'seller'; 
+    renderInventoryRow: (item: Inventory) => React.ReactNode; 
+  }) => {
+    const [isExpanded, setIsExpanded] = useState(true);
+    const totalItems = schoolItems.reduce((sum, item) => sum + item.quantity, 0);
+    const lowStockItems = schoolItems.filter(
+      item => item.quantity <= item.lowStockThreshold
+    ).length;
+
+    return (
+      <Card key={schoolId} className="overflow-hidden">
+        <button
+          onClick={() => setIsExpanded(!isExpanded)}
+          className="w-full text-left p-4 hover:bg-accent/50 transition-colors"
+        >
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <School className="h-5 w-5 text-muted-foreground" />
+              <h3 className="text-lg font-medium">{schoolName}</h3>
+              <div className="flex items-center gap-2">
+                <Badge variant="outline" className="ml-2">
+                  {schoolItems.length} {schoolItems.length === 1 ? 'item' : 'items'}
+                </Badge>
+                {lowStockItems > 0 && (
+                  <Badge variant="destructive" className="flex items-center gap-1">
+                    <AlertTriangle className="h-3 w-3" />
+                    {lowStockItems} low stock
+                  </Badge>
+                )}
+              </div>
+            </div>
+            <div className="flex items-center gap-4">
+              <div className="text-sm text-muted-foreground">
+                {totalItems} total in stock
+              </div>
+              <svg
+                className={`h-5 w-5 text-muted-foreground transition-transform ${
+                  isExpanded ? 'rotate-180' : ''
+                }`}
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M19 9l-7 7-7-7"
+                />
+              </svg>
+            </div>
+          </div>
+        </button>
+
+        {isExpanded && (
+          <div className="border-t">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Item Type</TableHead>
+                  <TableHead>Size</TableHead>
+                  <TableHead>Price</TableHead>
+                  <TableHead>In Stock</TableHead>
+                  <TableHead>Stock Level</TableHead>
+                  <TableHead>Status</TableHead>
+                  {type === 'school' && <TableHead>Actions</TableHead>}
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {schoolItems.map(renderInventoryRow)}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+      </Card>
+    );
+  });
+
+  // Memoize the sorted school IDs to prevent unnecessary re-renders
+  const memoizedSchoolSections = useMemo(() => {
+    return sortedSchoolIds.map((schoolId) => {
+      const schoolItems = inventoryBySchool[schoolId] || [];
+      return (
+        <SchoolSection
+          key={schoolId}
+          schoolId={schoolId}
+          schoolName={getSchoolName(schoolId)}
+          schoolItems={schoolItems}
+          type={type}
+          renderInventoryRow={renderInventoryRow}
+        />
+      );
+    });
+  }, [sortedSchoolIds, inventoryBySchool, type, renderInventoryRow]);
+
   return (
     <div className="space-y-6 max-w-7xl mx-auto">
       <div>
@@ -435,63 +602,43 @@ export default function InventoryView({ type, schoolId, schoolFilter }: Inventor
         </CardHeader>
         <CardContent>
           <div className="rounded-md border">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Item</TableHead>
-                  <TableHead>Size</TableHead>
-                  <TableHead>In Stock</TableHead>
-                  <TableHead>Stock Level</TableHead>
-                  <TableHead>Status</TableHead>
-                  {type === 'school' && <TableHead>Actions</TableHead>}
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {type === 'seller' && selectedSchool === 'all' ? (
-                  // Grouped by school view for seller
-                  sortedSchoolIds.map((schoolId) => {
-                    const schoolItems = inventoryBySchool[schoolId] || [];
-                    const schoolTotal = schoolItems.reduce((sum, item) => sum + item.quantity, 0);
-                    const schoolLowStock = schoolItems.filter(
-                      item => item.quantity <= item.lowStockThreshold
-                    ).length;
-                    
-                    return (
-                      <React.Fragment key={`school-${schoolId}`}>
-                        <TableRow className="bg-muted/50 hover:bg-muted/50">
-                          <TableCell colSpan={type === 'school' ? 5 : 6} className="font-semibold">
-                            <div className="flex items-center justify-between">
-                              <div className="flex items-center gap-2">
-                                <School className="h-4 w-4" />
-                                {getSchoolName(schoolId)}
-                                <Badge variant="outline" className="ml-2">
-                                  {schoolItems.length} item{schoolItems.length !== 1 ? 's' : ''}
-                                </Badge>
-                              </div>
-                              <div className="flex items-center gap-4">
-                                {schoolLowStock > 0 && (
-                                  <span className="flex items-center text-sm text-yellow-600 dark:text-yellow-500">
-                                    <AlertTriangle className="h-4 w-4 mr-1" />
-                                    {schoolLowStock} low stock
-                                  </span>
-                                )}
-                                <span className="text-sm font-mono">
-                                  Total: {schoolTotal} units
-                                </span>
-                              </div>
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                        {schoolItems.map(renderInventoryRow)}
-                      </React.Fragment>
-                    );
-                  })
-                ) : (
-                  // Regular view for single school or when a specific school is selected
-                  filteredInventory.map(renderInventoryRow)
+            {filteredInventory.length === 0 ? (
+              <div className="text-center py-12">
+                <Package className="mx-auto h-12 w-12 text-muted-foreground" />
+                <h3 className="mt-2 text-sm font-medium">No inventory items found</h3>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Get started by adding a new inventory item.
+                </p>
+                <div className="mt-6">
+                  <Button
+                    onClick={() => setIsAddDialogOpen(true)}
+                    data-testid="button-add-item"
+                  >
+                    <Plus className="h-4 w-4 mr-2" />
+                    Add Item
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-6">
+                <div className="space-y-4">
+                  {memoizedSchoolSections}
+                </div>
+                
+                {selectedItems.length > 0 && (
+                  <div className="fixed bottom-6 right-6 z-10">
+                    <Button 
+                      onClick={() => setIsInvoicePreviewOpen(true)}
+                      className="shadow-lg flex items-center gap-2"
+                      size="lg"
+                    >
+                      <FileText className="h-5 w-5" />
+                      View Invoice ({selectedItems.length} items)
+                    </Button>
+                  </div>
                 )}
-              </TableBody>
-            </Table>
+              </div>
+            )}
           </div>
 
           {filteredInventory.length === 0 && (
@@ -692,6 +839,95 @@ export default function InventoryView({ type, schoolId, schoolFilter }: Inventor
                 {addInventoryItem.isPending ? 'Adding...' : 'Add Item'}
               </Button>
             </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Invoice Preview Dialog */}
+      <Dialog open={isInvoicePreviewOpen} onOpenChange={setIsInvoicePreviewOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center justify-between">
+              <span>Invoice Preview</span>
+              <Button 
+                variant="ghost" 
+                size="icon" 
+                onClick={() => setIsInvoicePreviewOpen(false)}
+                className="h-8 w-8"
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </DialogTitle>
+            <DialogDescription>
+              Review items before generating invoice
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="space-y-4">
+            <div className="grid grid-cols-12 gap-4 font-medium text-sm text-muted-foreground pb-2 border-b">
+              <div className="col-span-6">Item</div>
+              <div className="col-span-2 text-right">Price</div>
+              <div className="col-span-2 text-center">Qty</div>
+              <div className="col-span-2 text-right">Total</div>
+            </div>
+
+            {selectedItems.map(({ id, quantity }) => {
+              const item = inventory.find(i => i.id === id);
+              if (!item) return null;
+              
+              const price = getItemPrice(item);
+              const total = price * quantity;
+              
+              return (
+                <div key={id} className="grid grid-cols-12 gap-4 items-center py-2 border-b">
+                  <div className="col-span-6">
+                    <div className="font-medium">{item.itemType}</div>
+                    <div className="text-sm text-muted-foreground">Size: {item.size}</div>
+                  </div>
+                  <div className="col-span-2 text-right">KES {price.toLocaleString()}</div>
+                  <div className="col-span-2 flex items-center justify-center">
+                    <Input
+                      type="number"
+                      min="1"
+                      value={quantity}
+                      onChange={(e) => updateItemQuantity(id, parseInt(e.target.value) || 1)}
+                      className="w-20 text-center"
+                    />
+                  </div>
+                  <div className="col-span-2 text-right font-medium">
+                    KES {total.toLocaleString()}
+                  </div>
+                </div>
+              );
+            })}
+
+            <div className="flex justify-end pt-4">
+              <div className="w-64 space-y-2">
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Subtotal:</span>
+                  <span>KES {calculateInvoiceTotal().toLocaleString()}</span>
+                </div>
+                <div className="flex justify-between border-t pt-2">
+                  <span className="font-semibold">Total:</span>
+                  <span className="font-bold">KES {calculateInvoiceTotal().toLocaleString()}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-3 pt-4">
+            <Button 
+              variant="outline" 
+              onClick={() => {
+                setSelectedItems([]);
+                setIsInvoicePreviewOpen(false);
+              }}
+            >
+              Clear Selection
+            </Button>
+            <Button disabled={selectedItems.length === 0}>
+              Generate Invoice
+            </Button>
           </div>
         </DialogContent>
       </Dialog>
