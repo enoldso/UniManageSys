@@ -347,13 +347,6 @@ export default function InventoryView({ type, schoolId, schoolFilter }: Inventor
     resetAddForm();
   };
 
-  // First, filter the inventory based on the current view
-  const filteredInventory = type === 'school' && schoolId
-    ? inventory
-    : selectedSchool === 'all'
-      ? inventory
-      : inventory.filter(item => item.schoolId === selectedSchool);
-
   // Group inventory by school for better organization
   const inventoryBySchool = filteredInventory.reduce<Record<string, Inventory[]>>((acc, item) => {
     const schoolId = item.schoolId || 'other';
