@@ -1,5 +1,8 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
+import { saveAs } from 'file-saver';
+import * as XLSX from 'xlsx';
+import { InventoryTable } from "./inventory/InventoryTable";
 import {
   Table,
   TableBody,
@@ -11,7 +14,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
@@ -38,12 +41,201 @@ export default function SchoolInventory({ schoolId }: SchoolInventoryProps) {
   const [issueQuantity, setIssueQuantity] = useState('1');
   const [selectedStudentId, setSelectedStudentId] = useState('');
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
+  const [isOrderDialogOpen, setIsOrderDialogOpen] = useState(false);
+  const [orderQuantity, setOrderQuantity] = useState('1');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>(null);
+  const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 10;
+
+  // Mock data for inventory with more size variants
+  const mockInventory = [
+    {
+      id: '1',
+      schoolId: schoolId,
+      itemType: 'Shirt',
+      size: 'S',
+      color: 'White',
+      quantity: 15,
+      lowStockThreshold: 5,
+      lastUpdated: new Date('2023-01-15').toISOString(),
+      category: 'Uniform',
+      gender: 'Unisex',
+      price: 12.99,
+      supplier: 'Uniforms Inc.'
+    },
+    {
+      id: '2',
+      schoolId: schoolId,
+      itemType: 'Shirt',
+      size: 'M',
+      color: 'White',
+      quantity: 10,
+      lowStockThreshold: 5,
+      lastUpdated: new Date('2023-01-15').toISOString(),
+      category: 'Uniform',
+      gender: 'Unisex',
+      price: 12.99,
+      supplier: 'Uniforms Inc.'
+    },
+    {
+      id: '3',
+      schoolId: schoolId,
+      itemType: 'Shirt',
+      size: 'L',
+      color: 'White',
+      quantity: 8,
+      lowStockThreshold: 5,
+      lastUpdated: new Date('2023-01-15').toISOString(),
+      category: 'Uniform',
+      gender: 'Unisex',
+      price: 12.99,
+      supplier: 'Uniforms Inc.'
+    },
+    {
+      id: '4',
+      schoolId: schoolId,
+      itemType: 'Pants',
+      size: '28',
+      color: 'Navy',
+      quantity: 12,
+      lowStockThreshold: 5,
+      lastUpdated: new Date('2023-01-20').toISOString(),
+      category: 'Uniform',
+      gender: 'Boys',
+      price: 24.99,
+      supplier: 'School Apparel Co.'
+    },
+    {
+      id: '5',
+      schoolId: schoolId,
+      itemType: 'Pants',
+      size: '30',
+      color: 'Navy',
+      quantity: 3,
+      lowStockThreshold: 5,
+      lastUpdated: new Date('2023-01-20').toISOString(),
+      category: 'Uniform',
+      gender: 'Boys',
+      price: 24.99,
+      supplier: 'School Apparel Co.'
+    }
+  ];
+
+  // Calculate paginated inventory
+  const filteredInventory = useMemo(() => {
+    let result = [...mockInventory];
+    
+    // Apply search filter
+    if (searchTerm) {
+      const term = searchTerm.toLowerCase();
+      result = result.filter(item => 
+        item.itemType.toLowerCase().includes(term) || 
+        item.size.toLowerCase().includes(term)
+      );
+    }
+    
+    // Apply status filter
+    if (statusFilter === 'in-stock') {
+      result = result.filter(item => item.quantity > 0);
+    } else if (statusFilter === 'low-stock') {
+      result = result.filter(item => 
+        item.quantity > 0 && item.quantity <= item.lowStockThreshold
+      );
+    } else if (statusFilter === 'out-of-stock') {
+      result = result.filter(item => item.quantity === 0);
+    }
+    
+    // Apply sorting
+    if (sortConfig) {
+      result.sort((a, b) => {
+        if (a[sortConfig.key as keyof typeof a] < b[sortConfig.key as keyof typeof b]) {
+          return sortConfig.direction === 'asc' ? -1 : 1;
+        }
+        if (a[sortConfig.key as keyof typeof a] > b[sortConfig.key as keyof typeof b]) {
+          return sortConfig.direction === 'asc' ? 1 : -1;
+        }
+        return 0;
+      });
+    }
+    
+    return result;
+  }, [mockInventory, searchTerm, statusFilter, sortConfig]);
+  
+  // Filtered inventory is used for display
+  const filteredItems = useMemo(() => {
+    return filteredInventory;
+  }, [filteredInventory]);
+  
   const [newItem, setNewItem] = useState({
     itemType: '',
     size: '',
     quantity: '',
     lowStockThreshold: '5',
   });
+
+  // Import Search icon
+  const Search = useMemo(() => {
+    return (props: React.SVGProps<SVGSVGElement>) => (
+      <svg
+        {...props}
+        xmlns="http://www.w3.org/2000/svg"
+        width="24"
+        height="24"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <circle cx="11" cy="11" r="8" />
+        <path d="m21 21-4.3-4.3" />
+      </svg>
+    );
+  }, []);
+
+  // Checkbox component
+  const Checkbox = useMemo(() => {
+    return ({
+      checked,
+      onCheckedChange,
+      className = "",
+      ariaLabel,
+    }: {
+      checked: boolean;
+      onCheckedChange: (checked: boolean) => void;
+      className?: string;
+      ariaLabel?: string;
+    }) => (
+      <button
+        type="button"
+        role="checkbox"
+        aria-checked={checked}
+        aria-label={ariaLabel}
+        className={`relative h-4 w-4 rounded border border-gray-300 dark:border-gray-600 flex items-center justify-center ${
+          checked ? 'bg-primary border-primary' : 'bg-white dark:bg-gray-800'
+        } ${className}`}
+        onClick={() => onCheckedChange(!checked)}
+      >
+        {checked && (
+          <svg
+            className="h-3 w-3 text-white"
+            viewBox="0 0 20 20"
+            fill="currentColor"
+          >
+            <path
+              fillRule="evenodd"
+              d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
+              clipRule="evenodd"
+            />
+          </svg>
+        )}
+      </button>
+    );
+  }, []);
 
   // Mock data for students
   const mockStudents = [
@@ -52,79 +244,60 @@ export default function SchoolInventory({ schoolId }: SchoolInventoryProps) {
     { id: '3', name: 'Michael Ochieng', admissionNumber: 'SCH003' },
   ];
 
-  // Mock data for inventory with more size variants
-  const mockInventory = [
-    {
-      id: '1',
-      schoolId: schoolId,
-      itemType: 'School Shirt',
-      size: 'S',
-      quantity: 15,
-      lowStockThreshold: 5,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    },
-    {
-      id: '2',
-      schoolId: schoolId,
-      itemType: 'School Shirt',
-      size: 'M',
-      quantity: 25,
-      lowStockThreshold: 5,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    },
-    {
-      id: '3',
-      schoolId: schoolId,
-      itemType: 'School Shirt',
-      size: 'L',
-      quantity: 18,
-      lowStockThreshold: 5,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    },
-    {
-      id: '4',
-      schoolId: schoolId,
-      itemType: 'School Trousers',
-      size: 'S',
-      quantity: 12,
-      lowStockThreshold: 5,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    },
+  // State for orders
+  const [orders, setOrders] = useState<Array<{
+    id: string;
+    itemId: string;
+    schoolId: string;
+    itemType: string;
+    size: string;
+    quantity: number;
+    status: 'pending' | 'received' | 'cancelled';
+    orderDate: Date;
+    expectedDelivery?: Date;
+    lowStockThreshold?: number;
+    updatedAt?: Date;
+  }>>([
     {
       id: '5',
+      itemId: '5',
       schoolId: schoolId,
       itemType: 'School Trousers',
       size: 'M',
       quantity: 20,
+      status: 'pending',
+      orderDate: new Date(),
+      expectedDelivery: new Date(),
       lowStockThreshold: 5,
-      createdAt: new Date(),
-      updatedAt: new Date(),
+      updatedAt: new Date()
     },
     {
       id: '6',
+      itemId: '6',
       schoolId: schoolId,
       itemType: 'School Sweater',
       size: 'M',
-      quantity: 3, // Low stock
+      quantity: 3,
+      status: 'pending',
+      orderDate: new Date(),
+      expectedDelivery: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
       lowStockThreshold: 5,
-      createdAt: new Date(),
-      updatedAt: new Date(),
+      updatedAt: new Date()
     },
     {
       id: '7',
+      itemId: '7',
       schoolId: schoolId,
-      itemType: 'School Sweater',
+      itemType: 'School Shirt',
       size: 'L',
-      quantity: 7,
+      quantity: 10,
+      status: 'pending',
+      orderDate: new Date(),
+      expectedDelivery: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
       lowStockThreshold: 5,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    },
-  ];
+      updatedAt: new Date()
+    }
+  ]);
 
   // Simulate loading state
   const [isLoading, setIsLoading] = useState(false);
@@ -249,13 +422,141 @@ export default function SchoolInventory({ schoolId }: SchoolInventoryProps) {
     });
   };
 
+  // Handle placing an order for low stock items
+  const handlePlaceOrder = () => {
+    if (!selectedItem) return;
+    
+    const newOrder = {
+      id: `order-${Date.now()}`,
+      itemId: selectedItem.id,
+      itemType: selectedItem.itemType,
+      size: selectedItem.size,
+      quantity: parseInt(orderQuantity) || 1,
+      status: 'pending' as const,
+      orderDate: new Date(),
+      expectedDelivery: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days from now
+    };
+    
+    setOrders(prev => [...prev, newOrder]);
+    
+    // Update the inventory (in a real app, this would be an API call)
+    const updatedInventory = mockInventory.map(item => 
+      item.id === selectedItem.id 
+        ? { ...item, quantity: item.quantity + parseInt(orderQuantity) }
+        : item
+    );
+    
+    // In a real app, you would update the inventory through an API call here
+    // For now, we'll just log it
+    console.log('Updated inventory:', updatedInventory);
+    
+    toast({
+      title: 'Order Placed',
+      description: `Order for ${orderQuantity} ${selectedItem.itemType} (${selectedItem.size}) has been placed`,
+    });
+    
+    setIsOrderDialogOpen(false);
+    setSelectedItem(null);
+    setOrderQuantity('1');
+  };
+  
+  // Handle issuing items to students
+  const handleIssueItem = () => {
+    if (!selectedItem || !selectedStudentId) return;
+    
+    const student = mockStudents.find(s => s.id === selectedStudentId);
+    if (!student) return;
+    
+    const quantity = parseInt(issueQuantity) || 1;
+    
+    if (selectedItem.quantity < quantity) {
+      toast({
+        title: 'Error',
+        description: 'Not enough items in stock',
+        variant: 'destructive',
+      });
+      return;
+    }
+    
+    // In a real app, this would be an API call
+    toast({
+      title: 'Item Issued',
+      description: `Issued ${quantity} ${selectedItem.itemType} (${selectedItem.size}) to ${student.name}`,
+    });
+    
+    // Update the inventory (in a real app, this would be an API call)
+    const updatedInventory = mockInventory.map(item => 
+      item.id === selectedItem.id 
+        ? { ...item, quantity: item.quantity - quantity }
+        : item
+    );
+    
+    console.log('Updated inventory after issue:', updatedInventory);
+    
+    // Close the dialog and reset
+    setIsIssueDialogOpen(false);
+    setSelectedItem(null);
+    setSelectedStudentId('');
+    setIssueQuantity('1');
+  };
+
   const getStatus = (quantity: number, threshold: number) => {
     if (quantity === 0) return { label: 'Out of Stock', color: 'text-red-600' };
     if (quantity <= threshold) return { label: 'Low Stock', color: 'text-yellow-600' };
     return { label: 'In Stock', color: 'text-green-600' };
   };
 
-  // Group inventory by item type
+  // Enhanced inventory processing with search, filter and sort
+  const processedInventory = useMemo(() => {
+    // First, filter and process all items
+    let items = [...mockInventory];
+    
+    // Apply search
+    if (searchTerm) {
+      const term = searchTerm.toLowerCase();
+      items = items.filter(item => 
+        item.itemType.toLowerCase().includes(term) || 
+        item.size.toLowerCase().includes(term)
+      );
+    }
+    
+    // Apply status filter
+    if (statusFilter !== 'all') {
+      items = items.filter(item => {
+        if (statusFilter === 'inStock') return item.quantity > 0;
+        if (statusFilter === 'lowStock') return item.quantity > 0 && item.quantity <= item.lowStockThreshold;
+        if (statusFilter === 'outOfStock') return item.quantity === 0;
+        return true;
+      });
+    }
+    
+    // Apply sorting
+    if (sortConfig !== null) {
+      items.sort((a, b) => {
+        let aValue, bValue;
+        
+        if (sortConfig.key === 'status') {
+          aValue = a.quantity === 0 ? 2 : (a.quantity <= a.lowStockThreshold ? 1 : 0);
+          bValue = b.quantity === 0 ? 2 : (b.quantity <= b.lowStockThreshold ? 1 : 0);
+        } else {
+          aValue = a[sortConfig.key as keyof typeof a];
+          bValue = b[sortConfig.key as keyof typeof b];
+        }
+        
+        if (aValue < bValue) {
+          return sortConfig.direction === 'asc' ? -1 : 1;
+        }
+        if (aValue > bValue) {
+          return sortConfig.direction === 'asc' ? 1 : -1;
+        }
+        return 0;
+      });
+    }
+    
+    return items;
+  }, [mockInventory, searchTerm, statusFilter, sortConfig]);
+
+  // Group inventory by item type after processing
   const groupedInventory = useMemo(() => {
     const groups: Record<string, { 
       items: typeof mockInventory;
@@ -263,7 +564,7 @@ export default function SchoolInventory({ schoolId }: SchoolInventoryProps) {
       lowStock: boolean;
     }> = {};
 
-    mockInventory.forEach(item => {
+    processedInventory.forEach(item => {
       if (!groups[item.itemType]) {
         groups[item.itemType] = {
           items: [],
@@ -282,12 +583,138 @@ export default function SchoolInventory({ schoolId }: SchoolInventoryProps) {
     });
 
     return groups;
-  }, [mockInventory]);
+  }, [processedInventory]);
+
+  // Handle bulk order for selected items
+  const handleBulkOrder = () => {
+    const itemsToOrder = mockInventory.filter(item => selectedItems.has(item.id));
+    
+    if (itemsToOrder.length === 0) {
+      toast({
+        title: 'No items selected',
+        description: 'Please select items to order',
+        variant: 'destructive',
+      });
+      return;
+    }
+    
+    const newOrders = itemsToOrder.map(item => ({
+      id: `order-${Date.now()}-${item.id}`,
+      itemId: item.id,
+      itemType: item.itemType,
+      size: item.size,
+      quantity: item.lowStockThreshold * 2, // Order double the threshold
+      status: 'pending' as const,
+      orderDate: new Date(),
+      expectedDelivery: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+    }));
+    
+    setOrders(prev => [...prev, ...newOrders]);
+    
+    // In a real app, you would update the inventory through an API call here
+    const updatedInventory = mockInventory.map(item => 
+      selectedItems.has(item.id)
+        ? { ...item, quantity: item.quantity + (item.lowStockThreshold * 2) }
+        : item
+    );
+    
+    console.log('Updated inventory after bulk order:', updatedInventory);
+    
+    toast({
+      title: 'Bulk Order Placed',
+      description: `Placed orders for ${itemsToOrder.length} items`,
+    });
+    
+    // Clear selection
+    setSelectedItems(new Set());
+  };
+  
+  // Toggle item selection
+  const toggleItemSelection = useCallback((itemId: string) => {
+    setSelectedItems(prev => {
+      const newSelection = new Set(prev);
+      if (newSelection.has(itemId)) {
+        newSelection.delete(itemId);
+      } else {
+        newSelection.add(itemId);
+      }
+      return newSelection;
+    });
+  }, []);
+
+  // Select all items on current page
+  const selectAllItems = useCallback(() => {
+    const pageItems = processedInventory
+      .slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage)
+      .map(item => item.id);
+      
+    setSelectedItems(prev => {
+      const allSelected = pageItems.every(id => prev.has(id));
+      const newSelection = new Set(prev);
+      
+      if (allSelected) {
+        pageItems.forEach(id => newSelection.delete(id));
+      } else {
+        pageItems.forEach(id => newSelection.add(id));
+      }
+      
+      return newSelection;
+    });
+  }, [currentPage, processedInventory]);
+
+  // Export to Excel
+  const exportToExcel = useCallback(() => {
+    const data = processedInventory.map(item => ({
+      'Item Type': item.itemType,
+      'Size': item.size,
+      'Quantity': item.quantity,
+      'Low Stock Threshold': item.lowStockThreshold,
+      'Status': item.quantity === 0 ? 'Out of Stock' : 
+                item.quantity <= item.lowStockThreshold ? 'Low Stock' : 'In Stock',
+      'Last Updated': new Date(item.updatedAt).toLocaleDateString()
+    }));
+
+    const worksheet = XLSX.utils.json_to_sheet(data);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Inventory');
+    
+    // Generate Excel file and trigger download
+    const excelBuffer = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
+    const dataBlob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    saveAs(dataBlob, `inventory-${new Date().toISOString().split('T')[0]}.xlsx`);
+    
+    toast({
+      title: 'Export Successful',
+      description: 'Inventory data has been exported to Excel',
+    });
+  }, [processedInventory, toast]);
 
   // Use mock students
   const students = mockStudents;
   
+  // Pagination
+  const totalPages = Math.ceil(processedInventory.length / itemsPerPage);
+  const paginatedItems = useMemo(() => {
+    const startIndex = (currentPage - 1) * itemsPerPage;
+    return processedInventory.slice(startIndex, startIndex + itemsPerPage);
+  }, [currentPage, processedInventory]);
+  
   // Loading and error states
+  // Request sort
+  const requestSort = (key: string) => {
+    let direction: 'asc' | 'desc' = 'asc';
+    if (sortConfig && sortConfig.key === key && sortConfig.direction === 'asc') {
+      direction = 'desc';
+    }
+    setSortConfig({ key, direction });
+  };
+
+  // Get sort indicator
+  const getSortIndicator = (key: string) => {
+    if (!sortConfig || sortConfig.key !== key) return null;
+    return sortConfig.direction === 'asc' ? '↑' : '↓';
+  };
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -310,122 +737,176 @@ export default function SchoolInventory({ schoolId }: SchoolInventoryProps) {
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto">
-      <div>
-        <h1 className="text-3xl font-bold">School Inventory</h1>
-        <p className="text-muted-foreground">
-          Manage your school's uniform inventory
-        </p>
+      <div className="flex justify-between items-center">
+        <div>
+          <h1 className="text-3xl font-bold">School Inventory</h1>
+          <p className="text-muted-foreground">
+            Manage your school's uniform inventory
+          </p>
+        </div>
+        <div className="flex gap-2">
+          {selectedItems.size > 0 && (
+            <div className="flex items-center gap-2 bg-primary/10 px-3 py-1.5 rounded-md">
+              <span className="text-sm font-medium">{selectedItems.size} selected</span>
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                className="text-destructive hover:bg-destructive/10"
+                onClick={() => {
+                  // Implement bulk delete
+                  setSelectedItems(new Set());
+                  toast({
+                    title: 'Items Removed',
+                    description: `${selectedItems.size} items removed from selection`,
+                  });
+                }}
+              >
+                Clear Selection
+              </Button>
+              <Button 
+                variant="default" 
+                size="sm" 
+                className="bg-green-600 hover:bg-green-700 text-white"
+                onClick={handleBulkOrder}
+              >
+                Order Selected ({selectedItems.size})
+              </Button>
+            </div>
+          )}
+          <Button 
+            variant="outline" 
+            size="sm" 
+            onClick={exportToExcel}
+            className="flex items-center gap-1"
+          >
+            <FileText className="h-4 w-4" />
+            <span>Export</span>
+          </Button>
+          <Button 
+            onClick={() => setIsAddDialogOpen(true)}
+            data-testid="button-add-inventory"
+            className="flex items-center gap-1"
+          >
+            <Plus className="h-4 w-4" />
+            <span>Add Item</span>
+          </Button>
+        </div>
       </div>
 
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle>Inventory Items</CardTitle>
-              <CardDescription>Current stock levels by item type</CardDescription>
-            </div>
-            <Button 
-              onClick={() => setIsAddDialogOpen(true)}
-              data-testid="button-add-inventory"
-            >
-              <Plus className="h-4 w-4 mr-2" />
-              Add Item
-            </Button>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-6">
-            {Object.entries(groupedInventory).map(([itemType, { items, totalQuantity, lowStock }]) => (
-              <div key={itemType} className="border rounded-lg overflow-hidden">
-                <div className="bg-muted/50 px-6 py-3 border-b flex justify-between items-center">
-                  <div className="flex items-center gap-3">
-                    <h3 className="font-medium">{itemType}</h3>
-                    <span className="text-sm text-muted-foreground">
-                      {totalQuantity} in stock
-                    </span>
-                    {lowStock && (
-                      <Badge variant="warning">Low Stock</Badge>
-                    )}
-                  </div>
-                </div>
-                <div className="divide-y">
-                  {items.map((item) => {
-                    const status = getStatus(item.quantity, item.lowStockThreshold);
-                    const progressValue = Math.min(
-                      (item.quantity / (item.lowStockThreshold * 2)) * 100,
-                      100
-                    );
+      // Replace the existing table section in SchoolInventory.tsx with this:
 
-                    return (
-                      <div key={item.id} className="px-6 py-4 grid grid-cols-12 items-center">
-                        <div className="col-span-1 font-medium">
-                          <div className="inline-flex items-center justify-center w-10 h-10 rounded-full bg-primary/10 text-primary">
-                            {item.size}
-                          </div>
-                        </div>
-                        <div className="col-span-4">
-                          <div className="flex flex-col">
-                            <span className="font-medium">Size {item.size}</span>
-                            <span className="text-sm text-muted-foreground">
-                              {item.quantity} available
-                            </span>
-                          </div>
-                        </div>
-                        <div className="col-span-5">
-                          <div className="flex items-center gap-3">
-                            <div className="w-full max-w-[200px]">
-                              <div className="relative w-full h-2 bg-gray-200 rounded-full overflow-hidden">
-                                <div 
-                                  className={`h-full ${
-                                    item.quantity === 0 
-                                      ? 'bg-red-500' 
-                                      : item.quantity <= item.lowStockThreshold 
-                                        ? 'bg-yellow-500' 
-                                        : 'bg-green-500'
-                                  }`}
-                                  style={{ width: `${progressValue}%` }}
-                                />
-                              </div>
-                            </div>
-                            <span className={`text-sm font-medium ${status.color}`}>
-                              {status.label}
-                            </span>
-                          </div>
-                        </div>
-                        <div className="col-span-2 flex justify-end">
-                          <Button
-                            size="sm"
-                            variant={item.quantity === 0 ? "ghost" : "outline"}
-                            onClick={() => {
-                              setSelectedItem(item);
-                              setIsIssueDialogOpen(true);
-                            }}
-                            disabled={item.quantity === 0}
-                            data-testid={`button-issue-${item.id}`}
-                            className="w-full sm:w-auto"
-                          >
-                            {item.quantity === 0 ? 'Out of Stock' : 'Issue Item'}
-                          </Button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            ))}
-            
-            {Object.keys(groupedInventory).length === 0 && (
-              <div className="text-center py-12 border rounded-lg">
-                <Package className="mx-auto h-12 w-12 text-muted-foreground" />
-                <h3 className="mt-2 text-sm font-medium">No inventory items found</h3>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  Get started by adding a new inventory item.
-                </p>
-              </div>
-            )}
-          </div>
-        </CardContent>
-      </Card>
+<Card>
+  <CardHeader className="pb-3">
+    <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+      <div>
+        <CardTitle>Inventory Items</CardTitle>
+        <CardDescription>Manage your school's uniform inventory</CardDescription>
+      </div>
+      <div className="flex flex-col sm:flex-row gap-2 w-full md:w-auto">
+        <div className="relative w-full">
+          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+          <Input
+            type="search"
+            placeholder="Search items..."
+            className="w-full pl-8"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+          />
+        </div>
+        <Select 
+          value={statusFilter} 
+          onValueChange={setStatusFilter}
+        >
+          <SelectTrigger className="w-full md:w-[180px]">
+            <SelectValue placeholder="Filter by status" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Items</SelectItem>
+            <SelectItem value="in-stock">In Stock</SelectItem>
+            <SelectItem value="low-stock">Low Stock</SelectItem>
+            <SelectItem value="out-of-stock">Out of Stock</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+    </div>
+  </CardHeader>
+  <CardContent>
+    <InventoryTable
+      items={paginatedItems}
+      onOrder={(item) => {
+        setSelectedItem(item);
+        setOrderQuantity('1');
+        setIsOrderDialogOpen(true);
+      }}
+      onIssue={(item) => {
+        setSelectedItem(item);
+        setIssueQuantity('1');
+        setIsIssueDialogOpen(true);
+      }}
+      onEdit={(item) => {
+        setSelectedItem(item);
+        setNewItem({
+          itemType: item.itemType,
+          size: item.size,
+          quantity: item.quantity.toString(),
+          lowStockThreshold: item.lowStockThreshold.toString(),
+        });
+        setIsAddDialogOpen(true);
+      }}
+    />
+  </CardContent>
+  <CardFooter className="flex flex-col sm:flex-row justify-between items-center gap-4">
+    <div className="text-sm text-muted-foreground">
+      Showing <span className="font-medium">{(currentPage - 1) * itemsPerPage + 1}</span> to{' '}
+      <span className="font-medium">
+        {Math.min(currentPage * itemsPerPage, processedInventory.length)}
+      </span>{' '}
+      of <span className="font-medium">{processedInventory.length}</span> items
+    </div>
+    <div className="flex items-center space-x-2">
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+        disabled={currentPage === 1}
+      >
+        Previous
+      </Button>
+      <div className="flex items-center space-x-1">
+        {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+          let pageNum;
+          if (totalPages <= 5) {
+            pageNum = i + 1;
+          } else if (currentPage <= 3) {
+            pageNum = i + 1;
+          } else if (currentPage >= totalPages - 2) {
+            pageNum = totalPages - 4 + i;
+          } else {
+            pageNum = currentPage - 2 + i;
+          }
+          return (
+            <Button
+              key={pageNum}
+              variant={pageNum === currentPage ? 'default' : 'ghost'}
+              size="sm"
+              onClick={() => setCurrentPage(pageNum)}
+            >
+              {pageNum}
+            </Button>
+          );
+        })}
+      </div>
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+        disabled={currentPage === totalPages}
+      >
+        Next
+      </Button>
+    </div>
+  </CardFooter>
+</Card>
 
       {/* Issue Uniform Dialog */}
       <Dialog open={isIssueDialogOpen} onOpenChange={setIsIssueDialogOpen}>
