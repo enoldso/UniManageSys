@@ -71,6 +71,64 @@ export class MemStorage implements IStorage {
     this.resupplies = new Map();
     this.payments = new Map();
     this.uniformIssuances = new Map();
+    
+    // Initialize with sample data
+    this.initializeSampleData();
+  }
+  
+  private async initializeSampleData() {
+    try {
+      // Create sample schools if they don't exist
+      const school1 = await this.createSchool({
+        name: 'Greenfield Academy',
+        code: 'SCH001',
+        password: 'password123'
+      });
+      
+      const school2 = await this.createSchool({
+        name: 'Riverside High',
+        code: 'SCH002',
+        password: 'password123'
+      });
+      
+      // Create sample inventory for school 1
+      await this.createInventoryItem({
+        schoolId: school1.id,
+        itemType: 'School Shirt',
+        size: 'M',
+        quantity: 50,
+        lowStockThreshold: 10
+      });
+      
+      await this.createInventoryItem({
+        schoolId: school1.id,
+        itemType: 'School Pants',
+        size: 'M',
+        quantity: 30,
+        lowStockThreshold: 5
+      });
+      
+      // Create sample inventory for school 2
+      await this.createInventoryItem({
+        schoolId: school2.id,
+        itemType: 'School Shirt',
+        size: 'L',
+        quantity: 40,
+        lowStockThreshold: 8
+      });
+      
+      await this.createInventoryItem({
+        schoolId: school2.id,
+        itemType: 'School Skirt',
+        size: 'S',
+        quantity: 25,
+        lowStockThreshold: 5
+      });
+      
+      console.log('Sample data initialized successfully');
+    } catch (error) {
+      console.error('Error initializing sample data:', error);
+    }
   }
 
   async getSchool(id: string): Promise<School | undefined> {

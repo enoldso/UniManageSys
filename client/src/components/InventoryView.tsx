@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
+import { SchoolSection } from './SchoolSection';
 import {
   Table,
   TableBody,
@@ -62,23 +63,101 @@ export default function InventoryView({ type, schoolId, schoolFilter }: Inventor
     ]
   });
   const { toast } = useToast();
+  
+  // Fetch students for the school (only for school users)
+  const { data: students = [] } = useQuery({
+    queryKey: ['students', schoolId],
+    queryFn: async () => {
+      if (type === 'school' && schoolId) {
+        const response = await fetch(`/api/students/${schoolId}`);
+        if (!response.ok) {
+          throw new Error('Failed to fetch students');
+        }
+        const data = await response.json();
+        return data as Student[];
+      }
+      return [];
+    },
+    enabled: type === 'school' && !!schoolId,
+    staleTime: 5 * 60 * 1000, // 5 minutes
+  });
+
+  const issueUniformMutation = useMutation({
+    mutationFn: async (data: any) => {
+      const res = await apiRequest('POST', '/api/issue-uniform', data);
+      return await res.json();
+    },
+    onSuccess: () => {
+      if (type === 'school' && schoolId) {
+        queryClient.invalidateQueries({ queryKey: ['/api/inventory', schoolId] });
+        queryClient.invalidateQueries({ queryKey: ['/api/students', schoolId] });
+      } else {
+        queryClient.invalidateQueries({ queryKey: ['/api/inventory/all/seller'] });
+      }
+      toast({
+        title: 'Success',
+        description: 'Uniform issued successfully',
+      });
+      setIsIssueDialogOpen(false);
+      resetIssueForm();
+    },
+    onError: (error: any) => {
+      toast({
+        title: 'Error',
+        description: error.message || 'Failed to issue uniform',
+        variant: 'destructive',
+      });
+    },
+  });
 
   // Fetch inventory data based on user type
   const { data: inventory = [], isLoading, error } = useQuery<Inventory[]>({
     queryKey: type === 'school' ? ['inventory', schoolId] : ['all-inventory'],
     queryFn: async () => {
-      if (type === 'school' && schoolId) {
-        // For school users, only fetch their own inventory
-        const data = await apiRequest<Inventory[]>(`/api/inventory/${schoolId}`);
-        return data || [];
-      } else {
-        // For sellers, fetch all inventory
-        const data = await apiRequest<Inventory[]>('/api/inventory/all/seller');
-        return data || [];
+      try {
+        if (type === 'school' && schoolId) {
+          // For school users, only fetch their own inventory
+          console.log(`Fetching inventory for school ${schoolId}`);
+          const response = await fetch(`/api/inventory/${schoolId}`);
+          if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            console.error('Error fetching inventory:', {
+              status: response.status,
+              statusText: response.statusText,
+              errorData
+            });
+            throw new Error('Failed to fetch inventory');
+          }
+          const data = await response.json();
+          console.log('Inventory data received:', data);
+          return data;
+        } else {
+          // For sellers, fetch all inventory
+          console.log('Fetching all inventory for seller');
+          const response = await fetch('/api/inventory/all/seller');
+          if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            console.error('Error fetching all inventory:', {
+              status: response.status,
+              statusText: response.statusText,
+              errorData
+            });
+            throw new Error('Failed to fetch all inventory');
+          }
+          const data = await response.json();
+          console.log('All inventory data received:', data);
+          return data;
+        }
+      } catch (error) {
+        console.error('Error in queryFn:', error);
+        throw error; // Re-throw to be caught by React Query
       }
     },
     enabled: type === 'school' ? !!schoolId : true,
     staleTime: 5 * 60 * 1000, // 5 minutes
+    onError: (error) => {
+      console.error('Error in useQuery:', error);
+    }
   });
 
   // Filter inventory based on selected school (for seller view only)
@@ -123,46 +202,6 @@ export default function InventoryView({ type, schoolId, schoolFilter }: Inventor
       </div>
     );
   }
-  // Fetch students for the school (only for school users)
-  const { data: students = [] } = useQuery<Student[]>({
-    queryKey: ['students', schoolId],
-    queryFn: async () => {
-      if (type === 'school' && schoolId) {
-        const data = await apiRequest<Student[]>(`/api/students/${schoolId}`);
-        return data || [];
-      }
-      return [];
-    },
-    enabled: type === 'school' && !!schoolId,
-  });
-
-  const issueUniformMutation = useMutation({
-    mutationFn: async (data: any) => {
-      const res = await apiRequest('POST', '/api/issue-uniform', data);
-      return await res.json();
-    },
-    onSuccess: () => {
-      if (type === 'school' && schoolId) {
-        queryClient.invalidateQueries({ queryKey: ['/api/inventory', schoolId] });
-        queryClient.invalidateQueries({ queryKey: ['/api/students', schoolId] });
-      } else {
-        queryClient.invalidateQueries({ queryKey: ['/api/inventory/all/seller'] });
-      }
-      toast({
-        title: 'Success',
-        description: 'Uniform issued successfully',
-      });
-      setIsIssueDialogOpen(false);
-      resetIssueForm();
-    },
-    onError: (error: any) => {
-      toast({
-        title: 'Error',
-        description: error.message || 'Failed to issue uniform',
-        variant: 'destructive',
-      });
-    },
-  });
 
   const resetIssueForm = () => {
     setSelectedItem(null);
@@ -509,111 +548,21 @@ export default function InventoryView({ type, schoolId, schoolFilter }: Inventor
     return 'bg-green-500';
   };
 
-  // SchoolSection component to handle collapsible school sections
-  const SchoolSection = React.memo(({ 
-    schoolId, 
-    schoolName, 
-    schoolItems, 
-    type, 
-    renderInventoryRow 
-  }: { 
-    schoolId: string; 
-    schoolName: string; 
-    schoolItems: Inventory[]; 
-    type: 'school' | 'seller'; 
-    renderInventoryRow: (item: Inventory) => React.ReactNode; 
-  }) => {
-    const [isExpanded, setIsExpanded] = useState(true);
-    const totalItems = schoolItems.reduce((sum, item) => sum + item.quantity, 0);
-    const lowStockItems = schoolItems.filter(
-      item => item.quantity <= item.lowStockThreshold
-    ).length;
-
-    return (
-      <Card key={schoolId} className="overflow-hidden">
-        <button
-          onClick={() => setIsExpanded(!isExpanded)}
-          className="w-full text-left p-4 hover:bg-accent/50 transition-colors"
-        >
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <School className="h-5 w-5 text-muted-foreground" />
-              <h3 className="text-lg font-medium">{schoolName}</h3>
-              <div className="flex items-center gap-2">
-                <Badge variant="outline" className="ml-2">
-                  {schoolItems.length} {schoolItems.length === 1 ? 'item' : 'items'}
-                </Badge>
-                {lowStockItems > 0 && (
-                  <Badge variant="destructive" className="flex items-center gap-1">
-                    <AlertTriangle className="h-3 w-3" />
-                    {lowStockItems} low stock
-                  </Badge>
-                )}
-              </div>
-            </div>
-            <div className="flex items-center gap-4">
-              <div className="text-sm text-muted-foreground">
-                {totalItems} total in stock
-              </div>
-              <svg
-                className={`h-5 w-5 text-muted-foreground transition-transform ${
-                  isExpanded ? 'rotate-180' : ''
-                }`}
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M19 9l-7 7-7-7"
-                />
-              </svg>
-            </div>
-          </div>
-        </button>
-
-        {isExpanded && (
-          <div className="border-t">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Item Type</TableHead>
-                  <TableHead>Size</TableHead>
-                  <TableHead>Price</TableHead>
-                  <TableHead>In Stock</TableHead>
-                  <TableHead>Stock Level</TableHead>
-                  <TableHead>Status</TableHead>
-                  {type === 'school' && <TableHead>Actions</TableHead>}
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {schoolItems.map(renderInventoryRow)}
-              </TableBody>
-            </Table>
-          </div>
-        )}
-      </Card>
-    );
-  });
-
   // Memoize the sorted school IDs to prevent unnecessary re-renders
   const memoizedSchoolSections = useMemo(() => {
-    return sortedSchoolIds.map((schoolId) => {
-      const schoolItems = inventoryBySchool[schoolId] || [];
-      return (
-        <SchoolSection
-          key={schoolId}
-          schoolId={schoolId}
-          schoolName={getSchoolName(schoolId)}
-          schoolItems={schoolItems}
-          type={type}
-          renderInventoryRow={renderInventoryRow}
-        />
-      );
-    });
-  }, [sortedSchoolIds, inventoryBySchool, type, renderInventoryRow]);
+    if (!sortedSchoolIds || !inventoryBySchool) return [];
+    
+    return sortedSchoolIds.map((schoolId) => (
+      <SchoolSection
+        key={schoolId}
+        schoolId={schoolId}
+        schoolName={getSchoolName(schoolId)}
+        schoolItems={inventoryBySchool[schoolId] || []}
+        type={type}
+        renderInventoryRow={renderInventoryRow}
+      />
+    ));
+  }, [sortedSchoolIds, inventoryBySchool, type, renderInventoryRow, getSchoolName]);
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto">

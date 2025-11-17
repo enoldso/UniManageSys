@@ -5,7 +5,7 @@ import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "./AppSidebar";
 import StatsCard from "./StatsCard";
 import StudentManagement from "./StudentManagement";
-import InventoryView from "./InventoryView";
+import SchoolInventory from "./SchoolInventory";
 import RepairTracking from "./RepairTracking";
 import { Users, ShoppingBag, DollarSign, AlertCircle, LogOut } from 'lucide-react';
 
@@ -94,7 +94,7 @@ export default function SchoolDashboard({ schoolId, schoolName, onLogout }: Scho
             )}
 
             {activeTab === 'students' && <StudentManagement schoolId={schoolId} />}
-            {activeTab === 'inventory' && <InventoryView type="school" schoolId={schoolId} />}
+            {activeTab === 'inventory' && <SchoolInventory schoolId={schoolId} />}
             {activeTab === 'repairs' && <RepairTracking type="school" schoolId={schoolId} />}
           </main>
         </div>

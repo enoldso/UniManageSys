@@ -62,6 +62,7 @@ type RepairFormValues = z.infer<typeof repairFormSchema>;
 
 interface RepairTrackingProps {
   type: 'school' | 'seller';
+  schoolId?: string;
 }
 
 // Mock data - in a real app, this would be replaced with API calls
